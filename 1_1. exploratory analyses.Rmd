@@ -12,6 +12,7 @@ library(tidyr) # for data analysis
 library(dplyr) # for data analysis
 library(ggplot2) # for plot
 library(lubridate) # for creating date variable
+library(stringr)
 ```
 
 ## Read in the parquet database
@@ -73,10 +74,26 @@ filter(ID %in% birth_ids & BWT=='')%>% #identify visits for kids born in a hospi
   mutate(age_months= as.numeric(age_months),
          age_years = as.numeric(age_years),
          age_days=as.numeric(age_days),
-    agem = if_else(age_years==0, age_days/30.437,age_months))
-
-hist(follow_up$agem)
+    agem = if_else(age_years==0, age_days/30.437,age_months)) %>%
+   rename_with(~paste0("ICD", str_extract(., "\\d+$")), starts_with("ICD-10-CM Diagnosis"))
 ```
+
+Age distribution of visits
+```{r}
+hist(follow_up$agem)
+
+```
+
+follow_up
+
+```{r}
+follow_up %>% group_by(ID) %>% 
+  summarize(N_visits=n()) %>%
+  ungroup() %>%
+  group_by(N_visits) %>%
+  summarize(N_people=n())
+```
+
 
 
 
