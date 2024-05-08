@@ -63,11 +63,19 @@ birth_ids <- NY_births_ids %>%pull(ID)
 
 follow_up <- NY_pq %>%
   filter(`Birth year`>=2016) %>% #there are a bunch of people with birth year <<2016
-    rename(AMONTH='Admission month',AYEAR="Admission year"  ,BWT="Birth weight in grams", ZIP="Patient ZIP Code" ,ID="Visit linkage variable"  ) %>%
+    rename(AMONTH='Admission month',AYEAR="Admission year"  ,BWT="Birth weight in grams", ZIP="Patient ZIP Code" ,ID="Visit linkage variable",
+           age_days='Age in days (when age < 1 year)',
+           age_months="Age in months (when age < 11 years)" ,
+           age_years = "Age in years at admission" ) %>%
 filter(ID %in% birth_ids & BWT=='')%>% #identify visits for kids born in a hospital for post-birth visits
-  collect()
+  dplyr::select(ID, ZIP, age_days,age_months,age_years,AMONTH,AYEAR, starts_with('ICD-10-CM Diagnosis'))%>%
+  collect()%>%
+  mutate(age_months= as.numeric(age_months),
+         age_years = as.numeric(age_years),
+         age_days=as.numeric(age_days),
+    agem = if_else(age_years==0, age_days/30.437,age_months))
 
-
+hist(follow_up$agem)
 ```
 
 
