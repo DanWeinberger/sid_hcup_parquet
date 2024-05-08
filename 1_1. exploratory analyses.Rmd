@@ -1,0 +1,127 @@
+---
+title: "1_1. exploratory analysis"
+author: "Gigi, modified from Dan's code"
+date: "1/13/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(arrow) # for analyze parquet in R
+library(tidyr) # for data analysis
+library(dplyr) # for data analysis
+library(ggplot2) # for plot
+library(lubridate) # for creating date variable
+```
+
+## Read in the parquet database
+
+```{r} 
+NY_pq <- open_dataset("R:/ParquetData/NY", format = "parquet") # a function in arrow package 
+```
+
+## Number of inpatient admissions by month in Arizona
+
+```{r}
+# For data element, please check:
+# https://www.hcup-us.ahrq.gov/db/nation/nis/nisdde.jsp
+
+NY_ad_date <- NY_pq %>%
+  rename(AMONTH='Admission month',AYEAR="Admission year"  ,BWT="Birth weight in grams" )%>%
+  group_by(AMONTH,AYEAR) %>%
+  summarize(N_cases = n()) %>%
+  collect()%>%
+ mutate(date=make_date(year = AYEAR, month = AMONTH))%>%
+  arrange(date)
+
+NY_births <- NY_pq %>%
+  rename(AMONTH='Admission month',AYEAR="Admission year"  ,BWT="Birth weight in grams" )%>%
+  filter(!is.na(BWT)) %>%
+  group_by(AYEAR) %>%
+  summarize(N_cases = n()) %>%
+  collect()%>%
+  arrange(AYEAR)
+```
+
+```{r}
+plot(x=NY_ad_date$date,y=NY_ad_date$N_cases,type="l",
+     main="Totol hospitalization per month in Arizona",
+     xlab="Date: Year-Month", ylab="number of monthly admission")
+```
+
+## Limit the analysis to older population
+
+```{r}
+# For data element, please check:
+# https://www.hcup-us.ahrq.gov/db/nation/nis/nisdde.jsp
+
+NY_ad_date_AGE <- NY_pq %>%
+  group_by(AMONTH,YEAR,AGE) %>%
+  summarize(N_cases = n()) %>%
+  collect()%>%
+ mutate(date=make_date(year = YEAR, month = AMONTH))%>%
+  arrange(date) # to ensure the correctness, I first full out the data
+# and then convert the data type. Arrow does not allow you to do it before collect 
+
+NY_ad_date_older <- NY_ad_date_AGE
+NY_ad_date_older$AGE <- as.numeric(NY_ad_date_older$AGE)
+# In the original file, you have four possible value type
+# 0-124	Age in years
+# .	Missing
+# .A	Invalid
+# .B	Unavailable from source (coded in 1988-1997 data only)
+# .C	Inconsistent: beginning with 1998 data, EAGE02, EAGE03, EAGE04, EAGE05; in 2006-2014 data, ECPT03; in 1988-1997 data, ED021, ED3nn, ED4nnn, ED5nn
+
+NY_ad_date_older_sum <-  NY_ad_date_older%>%
+  filter(AGE>=65)%>%
+  group_by(date)%>%
+  summarize(N_cases_sum = sum(N_cases) )
+```
+
+```{r}
+plot(x=NY_ad_date_older_sum$date,y=NY_ad_date_older_sum$N_cases_sum,type="l",
+     main="Totol hospitalization per month in Arizona in older population",
+     xlab="Date: Year-Month", ylab="number of monthly admission")
+```
+## mean Length of stay (LOS)
+```{r}
+# Note: because we did not clean the data in the first place, arrow assign all data type as string. You also cannot change it because the inpatient data has several data types for one variable. For example, for age, you have both integer (0-124) and character (A,B,C)
+
+# you can change the data type after collect but I separated this into two steps to avoid the excessive warning messages.
+
+LOS_trends <- NY_pq %>%
+  select(AMONTH,YEAR,AGE,LOS,PAY1) %>%
+  collect() %>%
+  mutate(date=make_date(year = YEAR, month = AMONTH))%>%
+  arrange(date)  %>%
+  group_by(date)
+
+LOS_trends$AGE <- as.numeric(LOS_trends$AGE)
+LOS_trends$LOS <- as.numeric(LOS_trends$LOS)
+LOS_trends$PAY1 <- as.numeric(LOS_trends$PAY1)
+
+LOS_trends_old <-  LOS_trends%>%
+  filter(AGE>=65,PAY1==1)%>%
+  group_by(date)%>%
+  summarize(LOS_mean = mean(LOS,na.rm=T))
+```
+
+## Plot the mean length of stay in older adult population
+```{r}
+plot(x=LOS_trends_old$date,y=LOS_trends_old$LOS_mean,type="l",
+     main="Mean length of stay in Arizona in older adult population",
+     xlab="Date: Year-Month", ylab="Mean length of stay (in days)")
+```
+
+
+## Plot the mean length of stay in young population
+```{r}
+LOS_trends_young <-  LOS_trends%>%
+  filter(AGE<=45)%>%
+  group_by(date)%>%
+  summarize(LOS_mean = mean(LOS,na.rm=T))
+
+plot(x=LOS_trends_young$date,y=LOS_trends_young$LOS_mean,type="l",
+     main="Mean length of stay in Arizona in young population",
+     xlab="Date: Year-Month", ylab="Mean length of stay (in days)")
+```
