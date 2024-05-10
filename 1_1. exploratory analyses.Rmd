@@ -95,5 +95,79 @@ follow_up %>% group_by(ID) %>%
 ```
 
 
+```{r}
+a1 <- follow_up %>%
+  unite(all_icd, ICD1:ICD25, na.rm=F) %>%
+  mutate( rsv = if_else(  grepl('B974', all_icd)| grepl('J121', all_icd)| grepl('J121', all_icd)| grepl('J205', all_icd)| grepl('J210', all_icd) , 1,0
+                          )
+          ) %>%
+  arrange(ID, agem) %>%
+  group_by(ID) %>%
+  mutate(visitN=row_number()) %>%
+  ungroup()
+```
 
+On which visit number did RSV occur?
+```{r}
+table(a1$rsv, a1$visitN)
+```
+
+```{r}
+a1 %>%
+  filter(rsv==1) %>%
+  ggplot(aes(x=agem)) +
+  geom_histogram()+
+  theme_classic()+
+  ggtitle('Age (m) of rsv cases admitted to hospital')
+```
+
+
+How many RSV visits does a person have?
+
+```{r}
+a1 %>% group_by(ID) %>% summarize(N_rsv=sum(rsv)) %>%
+  ungroup()%>%
+  group_by(N_rsv) %>%
+  summarize(N_people=n())
+```
+
+ED data
+"The SEDD capture emergency visits at hospital-owned emergency departments (EDs) that do not result in hospitalization. Information about patients initially seen in the ED and then admitted to the hospital is included in the State Inpatient Databases (SID). "
+```{r}
+birth_ids <- NY_births_ids %>%pull(ID)
+
+
+NY_ed_pq <- open_dataset("R:/ParquetData/NY_SEDD", format = "parquet") %>% # a function in arrow package 
+   rename(ID=VisitLink) %>%
+filter(ID %in% birth_ids )%>% #identify visits for kids born in a hospital for post-birth visits
+  dplyr::select(ID, ZIP, AGEDAY,AGEMONTH,AGE,AMONTH,AYEAR, starts_with('I10_DX1'))%>%
+   dplyr::select(AGEMONTH, AGE,AGEDAY, AMONTH, AYEAR, ZIP,starts_with("I10_DX")) %>%    
+  collect() %>%
+    unite(all_icd, I10_DX1:I10_DX19, na.rm=F) %>%
+  mutate( rsv = if_else(  grepl('B974', all_icd)| grepl('J121', all_icd)| grepl('J121', all_icd)| grepl('J205', all_icd)| grepl('J210', all_icd) , 1,0
+                          )
+          ) %>%
+  filter(rsv==1)
+
+saveRDS(NY_ed_pq, './CONFIDENTIAL/NY_ed_rsv.rds')
+
+
+NY_ed_pq %>%
+  mutate(age_months= as.numeric(AGEMONTH),
+         age_years = as.numeric(AGE),
+         age_days=as.numeric(AGEDAY),
+    agem = if_else(age_years==0, age_days/30.437,age_months)) %>%
+    ggplot(aes(x=agem)) +
+  geom_histogram()+
+  theme_classic()+
+  ggtitle('Age (m) of rsv cases in the ED')
+#8884 inpatient records, 6944 ed records
+
+NY_ed_pq %>%
+  mutate(age_months= as.numeric(AGEMONTH),
+         age_years = as.numeric(AGE),
+         age_days=as.numeric(AGEDAY),
+    agem = if_else(age_years==0, age_days/30.437,age_months)) %>%
+  summary(agem)
+```
 
