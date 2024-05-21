@@ -38,7 +38,12 @@ saveRDS(NY_births_ids, './CONFIDENTIAL/all_births.rds')
 
 ```{r}
 NY_births_ids <- readRDS( './CONFIDENTIAL/all_births.rds') %>%
-  mutate(BWT=as.numeric(BWT))
+  mutate(BWT=as.numeric(BWT),
+         low_bwt= if_else(BWT<1500 ,2,
+                          if_else(BWT>=1500 & BWT<2500,1,0)),
+          low_bwt = factor(low_bwt, levels=c(0,1,2))
+         )
+        
 ```
 
 How many births per year?
@@ -141,7 +146,7 @@ NY_ed_pq <- open_dataset("R:/ParquetData/NY_SEDD", format = "parquet") %>% # a f
    rename(ID=VisitLink) %>%
 filter(ID %in% birth_ids )%>% #identify visits for kids born in a hospital for post-birth visits
   dplyr::select(ID, ZIP, AGEDAY,AGEMONTH,AGE,AMONTH,AYEAR, starts_with('I10_DX1'))%>%
-   dplyr::select(AGEMONTH, AGE,AGEDAY, AMONTH, AYEAR, ZIP,starts_with("I10_DX")) %>%    
+   dplyr::select(AGEMONTH, AGE,AGEDAY, AMONTH, AYEAR,ID, ZIP,starts_with("I10_DX")) %>%    
   collect() %>%
     unite(all_icd, I10_DX1:I10_DX19, na.rm=F) %>%
   mutate( rsv = if_else(  grepl('B974', all_icd)| grepl('J121', all_icd)| grepl('J121', all_icd)| grepl('J205', all_icd)| grepl('J210', all_icd) , 1,0
@@ -170,4 +175,111 @@ NY_ed_pq %>%
     agem = if_else(age_years==0, age_days/30.437,age_months)) %>%
   summary(agem)
 ```
+##
+```{r}
+rsv_outp <- NY_ed_pq %>%
+  filter(rsv==1) %>%
+   mutate(age_months= as.numeric(AGEMONTH),
+         age_years = as.numeric(AGE),
+         age_days=as.numeric(AGEDAY),
+    agem = if_else(age_years==0, age_days/30.437,age_months),
+    AYEAR=as.numeric(AYEAR),
+    AMONTH=as.numeric(AMONTH)) %>%
+  dplyr::select(ID, agem, AMONTH ,AYEAR) %>%
+  ungroup()
+
+rsv_inp <- a1 %>% filter(rsv==1) %>%
+  dplyr::select(ID, agem, AMONTH ,AYEAR) %>%
+  ungroup()
+
+rsv_comb <- bind_rows(rsv_inp, rsv_outp) %>%
+  arrange(ID, AYEAR, AMONTH) %>%
+  group_by(ID) %>%
+  mutate(visitN=row_number())
+
+#create a survival df
+birth_df <- NY_births_ids %>%
+  rename(birthmonth=AMONTH,
+         birthyear=AYEAR) 
+
+```
+
+```{r}
+rsv_first_visit <- rsv_comb %>% filter(visitN==1 & !is.na(AYEAR)) %>%
+  mutate(event_date=as.Date(paste(AYEAR, AMONTH, '01', sep='-')),
+         rsv=1,
+         agem=round(agem)
+         ) %>%
+  left_join(birth_df, by='ID') %>%
+  group_by(agem, low_bwt) %>%
+  summarize(N=n()) %>%
+  ungroup() %>%
+  group_by(low_bwt) %>%
+  mutate(pct = N/sum(N)) %>%
+  filter(!is.na(low_bwt))
+
+ggplot(rsv_first_visit, aes(x=agem, y=pct, group=low_bwt, color=low_bwt))+
+  geom_line()+
+  theme_minimal()
+```
+
+
+Full survival set (tabkes a long time to run)
+```{r, eval=F}
+rsv_first_visit <- rsv_comb %>% filter(visitN==1 & !is.na(AYEAR)) %>%
+  mutate(event_date=as.Date(paste(AYEAR, AMONTH, '01', sep='-')),
+         rsv=1
+         ) %>%
+  full_join(birth_df, by='ID') %>%
+  mutate(birth_date=as.Date(paste(birthyear , birthmonth, '01', sep='-')),
+    event_age=if_else(rsv==1, agem,
+             interval(birth_date, as.Date('2019-01-01')) %/% months(1)     ),
+    event_age=round(event_age),
+    rsv=if_else(is.na(rsv),0,rsv)) %>%
+  group_by(rsv,birth_date, event_age, low_bwt) %>%
+  summarize(N=n())
+saveRDS(rsv_first_visit,'./CONFIDENTIAL/survival_data.rds')
+```
+```{r}
+
+rsvN <- readRDS('./CONFIDENTIAL/survival_data.rds') %>%
+  filter(rsv==1) %>%
+  ungroup() %>%
+  dplyr::select(-rsv) %>%
+  tidyr::complete(.,birth_date, event_age, low_bwt, fill=list(N=0)) %>%
+  arrange(birth_date,low_bwt, event_age) %>%
+  group_by(birth_date,low_bwt) %>%
+  mutate(cum_events=cumsum(N),
+         cum_events_lag=lag(cum_events),
+         cum_events_lag=if_else(is.na(cum_events_lag),0,cum_events_lag)) %>%
+  ungroup()
+
+N_births <- readRDS('./CONFIDENTIAL/survival_data.rds') %>%
+  filter(rsv==0) %>%
+  rename(N_births=N) %>%
+  ungroup() %>%
+  dplyr::select(birth_date, low_bwt,N_births)
+
+rsv_visits <- rsvN %>%
+  left_join(N_births, by=c('birth_date','low_bwt')) %>%
+  mutate(N_at_risk = N_births -cum_events_lag )
+
+
+
+```
+
+ 
+```{r} 
+rsv_first_visit %>%
+  filter(!is.na(low_bwt) & rsv==1) %>%
+  ggplot(aes(x=agem) ) +
+  geom_histogram()+
+  theme_classic()+
+  facet_wrap(~low_bwt, scales='free') +
+  ggtitle('Age (m) of rsv cases admitted to hospital')
+
+
+
+```
+
 
